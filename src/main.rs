@@ -1,7 +1,13 @@
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use clap::Parser;
 use crossterm::style::{Color, Stylize};
+
+
+static FILE_COUNT: AtomicUsize = AtomicUsize::new(0);
+static REPLACED_COUNT: AtomicUsize = AtomicUsize::new(0);
+
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -29,7 +35,8 @@ fn display_changes_in_file(query: &str, substitute: &str, path: &str) -> Result<
     if !content.contains(query) {
         return Ok(());
     }
-    code.push_str(&format!("\n╭{}\n", format!(" {} ", path).stylize().with(Color::Grey)));
+    code.push_str(&format!("╭{}\n", format!(" {} ", path).stylize().with(Color::Grey)));
+    FILE_COUNT.fetch_add(1, Ordering::SeqCst);
 
     let lines = content.lines();
     let mut line_number = 1;
@@ -44,7 +51,10 @@ fn display_changes_in_file(query: &str, substitute: &str, path: &str) -> Result<
                 .bold()
             ));
 
-            code.push_str(&format!("│ {:<5} {:<80}\n", line_number.to_string().stylize().with(Color::DarkGrey), line));
+            let changes = line.matches(substitute).count();
+            REPLACED_COUNT.fetch_add(changes, Ordering::SeqCst);
+
+            code.push_str(&format!("│ {:<6} {:<80}\n", line_number.to_string().stylize().with(Color::DarkGrey), line));
         } else {
             if !skipped {
                 code.push_str(format!("│ {} \n", "...".to_string().stylize().with(Color::DarkGrey)).as_str());
@@ -92,22 +102,27 @@ fn list_files_in_folder(folder: &str) -> Result<Vec<PathBuf>, std::io::Error>{
 }
 
 fn prompt_user() -> bool {
-    println!("\nDo you want to continue? [y/n]");
-    let mut input = String::new();
-    match std::io::stdin().read_line(&mut input) {
-        Ok(_) => {},
-        Err(e) => {
-            println!("Error reading input: {:?}", e);
-            prompt_user();
+    println!("\nFound {} replacements in {} files.", 
+        REPLACED_COUNT.load(std::sync::atomic::Ordering::SeqCst).to_string().stylize().with(Color::Green),
+        FILE_COUNT.load(std::sync::atomic::Ordering::SeqCst).to_string().stylize().with(Color::Yellow),
+    );
+    loop {
+        println!("\nDo you want to continue? [y/n]");
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input).unwrap();
+        match input.trim() {
+            "y" => return true,
+            "n" => return false,
+            _ => println!("Invalid input. Please enter 'y' or 'n'"),
         }
     }
-    input.trim() == "y"
+    
 }
 
 
 fn main() -> Result<(), std::io::Error>{
     let opts: Opts = Opts::parse();
-    println!("Replacing {} with {} in folder {}:", 
+    println!("rplc {} with {} in folder {}:\n", 
         opts.query.clone().stylize().with(crossterm::style::Color::Yellow).bold(),
         opts.substitute.clone().stylize().with(crossterm::style::Color::Green).bold(), 
         opts.path.clone().stylize().with(crossterm::style::Color::Green)
@@ -116,7 +131,7 @@ fn main() -> Result<(), std::io::Error>{
     if !opts.write {
         if !opts.recursive {
             display_changes_in_file(&opts.query, &opts.substitute, &opts.path)?;
-            if !prompt_user() {
+            if prompt_user() {
                 replace_in_file(&opts.query, &opts.substitute, &opts.path)?;
                 return Ok(());
             }
@@ -124,7 +139,8 @@ fn main() -> Result<(), std::io::Error>{
         for file in list_files_in_folder(&opts.path)? {
             display_changes_in_file(&opts.query, &opts.substitute, file.to_str().unwrap())?;
         }
-        if !prompt_user() {
+
+        if prompt_user() {
             return Ok(());
         }
         for file in list_files_in_folder(&opts.path)? {

@@ -19,6 +19,7 @@ use tokio::fs::read_to_string;
 use libs::decorate_file_content::{decorate_file_content, happend_changes_in_file};
 
 use self::libs::scrollbar::display_scrollbar;
+use self::libs::split_query::split_query;
 use self::libs::terminal::print_at;
 
 static SCROLL_OFFSET: AtomicUsize = AtomicUsize::new(0);
@@ -345,22 +346,32 @@ async fn handle_search_and_replace(
 async fn handle_user_query(user_query: &String) -> Result<(), std::io::Error> {
     execute!(stdout(), Clear(ClearType::Purge))?;
     execute!(stdout(), Clear(ClearType::All))?;
-    let split_query: Vec<&str> = user_query.split(" ").collect();
+        
+    let split = split_query(user_query);
+    
+    match (&split.glob, &split.search, &split.replace) {
+        (Some(glob), None, None) => handle_glob_search(&glob).await?,
+        (Some(glob), Some(search), None) => handle_search_and_replace(&glob, &search, &search).await?,
+        (Some(glob), Some(search), Some(replace)) => handle_search_and_replace(&glob, &search, &replace).await?,
+        _ => handle_search_and_replace("", "", "").await?,
+    }
+
+    // let split_query: Vec<&str> = user_query.split(" ").collect();
     REPLACED_COUNT.store(0, Ordering::SeqCst);
     FILE_COUNT.store(0, Ordering::SeqCst);
 
-    match split_query.len() {
-        1 => handle_glob_search(user_query).await?,
-        2 => {
-            if split_query[1].len() > 0 {
-                handle_search_and_replace(split_query[0], split_query[1], split_query[1]).await?
-            } else {
-                handle_glob_search(user_query).await?
-            }
-        }
-        3 => handle_search_and_replace(split_query[0], split_query[1], split_query[2]).await?,
-        _ => handle_search_and_replace(split_query[0], split_query[1], split_query[2]).await?,
-    }
+    // match split_query.len() {
+    //     1 => handle_glob_search(user_query).await?,
+    //     2 => {
+    //         if split_query[1].len() > 0 {
+    //             handle_search_and_replace(split_query[0], split_query[1], split_query[1]).await?
+    //         } else {
+    //             handle_glob_search(user_query).await?
+    //         }
+    //     }
+    //     3 => handle_search_and_replace(split_query[0], split_query[1], split_query[2]).await?,
+    //     _ => handle_search_and_replace(split_query[0], split_query[1], split_query[2]).await?,
+    // }
 
     Ok(())
 }

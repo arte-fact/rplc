@@ -2,9 +2,9 @@ use crossterm::style::Stylize;
 
 #[derive(Debug, PartialEq, Default)]
 pub struct QuerySplit {
-    glob: Option<String>,
-    search: Option<String>,
-    replace: Option<String>,
+    pub glob: Option<String>,
+    pub search: Option<String>,
+    pub replace: Option<String>,
 }
 
 impl QuerySplit {

@@ -1,7 +1,12 @@
+use std::io::Error;
+
 use crossterm::style::Stylize;
+
+use super::terminal::{clear_lines, cursor_at, print_at, show_cursor};
 
 #[derive(Debug, PartialEq, Default)]
 pub struct QuerySplit {
+    pub query: Option<String>,
     pub glob: Option<String>,
     pub search: Option<String>,
     pub replace: Option<String>,
@@ -11,17 +16,36 @@ impl QuerySplit {
     pub fn display_with_colors(&self) -> String {
         let mut display = String::new();
         if let Some(glob) = &self.glob {
-            display.push_str(glob.to_string().stylize().blue().to_string().as_str());
+            display.push_str(glob.to_string().stylize().bold().blue().to_string().as_str());
         }
         if let Some(search) = &self.search {
             display.push(' ');
-            display.push_str(search.to_string().stylize().yellow().to_string().as_str());
+            display.push_str(search.to_string().stylize().bold().yellow().to_string().as_str());
         }
         if let Some(replace) = &self.replace {
             display.push(' ');
-            display.push_str(replace.to_string().stylize().green().to_string().as_str());
+            display.push_str(replace.to_string().stylize().bold().green().to_string().as_str());
         }
         display
+    }
+
+    pub fn len(&self) -> usize {
+        match self.query {
+            Some(ref query) => query.len(),
+            None => 0,
+        }
+    }
+
+    pub fn print(&self) -> Result<(), Error> {
+        clear_lines(&[2])?;
+        let content = self.display_with_colors();
+        print_at(0, 2, &content)?;
+        self.restore_cursor()
+    }
+
+    pub fn restore_cursor(&self) -> Result<(), Error> {
+        cursor_at(self.len() as u16, 2)?;
+        show_cursor()
     }
 }
 
@@ -61,6 +85,7 @@ pub fn split_query(query: &str) -> QuerySplit {
         }
     }
     update_split_query(&mut split_query, &temp);
+    split_query.query = Some(query.to_string());
 
     split_query
 }
@@ -71,6 +96,7 @@ fn handle_simple() {
     assert_eq!(
         split_query(query),
         QuerySplit {
+            query: Some(query.to_string()),
             glob: Some("*".to_string()),
             search: Some("search".to_string()),
             replace: Some("replace".to_string()),
@@ -84,6 +110,7 @@ fn handle_double_quotes() {
     assert_eq!(
         split_query(query),
         QuerySplit {
+            query: Some(query.to_string()),
             glob: Some("*".to_string()),
             search: Some("search quotes".to_string()),
             replace: Some("replace".to_string()),
@@ -97,6 +124,7 @@ fn handle_single_quotes() {
     assert_eq!(
         split_query(query),
         QuerySplit {
+            query: Some(query.to_string()),
             glob: Some("*".to_string()),
             search: Some("search quotes".to_string()),
             replace: Some("replace".to_string()),
@@ -110,6 +138,7 @@ fn handle_empty() {
     assert_eq!(
         split_query(query),
         QuerySplit {
+            query: Some(query.to_string()),
             glob: None,
             search: None,
             replace: None,
@@ -123,6 +152,7 @@ fn handle_empty_quotes() {
     assert_eq!(
         split_query(query),
         QuerySplit {
+            query: Some(query.to_string()),
             glob: Some("src".to_string()),
             search: None,
             replace: None,
@@ -136,6 +166,7 @@ fn ignore_additional_spaces() {
     assert_eq!(
         split_query(query),
         QuerySplit {
+            query: Some(query.to_string()),
             glob: Some("*".to_string()),
             search: Some("search".to_string()),
             replace: Some("replace".to_string()),
@@ -149,6 +180,7 @@ fn ignore_additional_words() {
     assert_eq!(
         split_query(query),
         QuerySplit {
+            query: Some(query.to_string()),
             glob: Some("*".to_string()),
             search: Some("search".to_string()),
             replace: Some("replace".to_string()),
@@ -159,6 +191,7 @@ fn ignore_additional_words() {
 #[test]
 fn query_display_with_colors() {
     let query = QuerySplit {
+        query: Some("* search replace".to_string()),
         glob: Some("*".to_string()),
         search: Some("search".to_string()),
         replace: Some("replace".to_string()),
@@ -167,9 +200,9 @@ fn query_display_with_colors() {
         query.display_with_colors(),
         format!(
             "{} {} {}",
-            "*".to_string().stylize().blue(),
-            "search".to_string().stylize().yellow(),
-            "replace".to_string().stylize().green()
+            "*".to_string().stylize().bold().blue(),
+            "search".to_string().stylize().bold().yellow(),
+            "replace".to_string().stylize().bold().green()
         )
     );
 }

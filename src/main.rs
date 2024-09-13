@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate lazy_static;
+
 mod libs;
 
 use std::io::{stdout, Error};
@@ -20,7 +23,8 @@ use libs::decorate_file_content::{decorate_file_content, happend_changes_in_file
 
 use self::libs::scrollbar::display_scrollbar;
 use self::libs::split_query::split_query;
-use self::libs::terminal::print_at;
+use self::libs::state::{clear_files, get_file, get_files_names, store_file};
+use self::libs::terminal::{clear_results, get_screen_size, print_at, screen_height, screen_width};
 
 static SCROLL_OFFSET: AtomicUsize = AtomicUsize::new(0);
 static FILE_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -47,15 +51,20 @@ struct Opts {
 }
 
 async fn display_changes_in_file(
-    query: &str,
-    substitute: &str,
+    search: Option<String>,
+    substitute: Option<String>,
     path: &str,
-) -> Result<Vec<String>, std::io::Error> {
-    let content = match read_to_string(path).await {
-        Ok(content) => content,
-        Err(e) => {
-            return Ok(vec![format!("Could not read file {}: {}", path, e)]);
-        }
+) -> Result<(Vec<String>, usize), std::io::Error> {
+    let content = get_file(path).await.unwrap_or("No content.".to_string());
+
+    let query = match search {
+        Some(query) => query,
+        None => return Ok((content.lines().map(|x| x.to_string()).collect(), 0)),
+    };
+
+    let substitute = match substitute {
+        Some(substitute) => substitute,
+        None => query.clone(),
     };
 
     let (result, changes) = happend_changes_in_file(
@@ -63,27 +72,29 @@ async fn display_changes_in_file(
         query,
         substitute,
     );
+
     REPLACED_COUNT.fetch_add(changes, Ordering::SeqCst);
     if changes != 0 {
         FILE_COUNT.fetch_add(1, Ordering::SeqCst);
     }
-    let decorated =
-        decorate_file_content(path.to_string(), result, &format!("{} changes", changes));
-
-    Ok(decorated)
+    Ok((result, changes))
 }
 
-async fn replace_in_file(query: &str, substitute: &str, path: &str) -> Result<(), std::io::Error> {
+async fn replace_in_file(
+    query: String,
+    substitute: String,
+    path: &str,
+) -> Result<(), std::io::Error> {
     let content = match read_to_string(path).await {
         Ok(content) => content,
         Err(_e) => {
             return Ok(());
         }
     };
-    if !content.contains(query) {
+    if !content.contains(&query) {
         return Ok(());
     }
-    let new_content = content.replace(query, substitute);
+    let new_content = content.replace(&query, &substitute);
 
     std::fs::write(path, new_content)?;
     Ok(())
@@ -100,6 +111,31 @@ fn list_glob_files(glob_pattern: &str) -> Result<Vec<PathBuf>, std::io::Error> {
             Ok(files)
         }
     }
+}
+
+async fn store_glob_files(glob_pattern: &str) -> Result<(), std::io::Error> {
+    clear_files().await;
+    match glob(glob_pattern) {
+        Err(e) => {
+            println!("Could not list files: {}", e);
+            return Ok(());
+        }
+        Ok(files) => {
+            let files: Vec<PathBuf> = files.take(50).filter_map(|x| x.ok()).collect();
+            for file in files.iter() {
+                if !file.is_file() {
+                    continue;
+                }
+                let file_name = file.to_str().unwrap_or("Could not read file name");
+                let content = match read_to_string(file).await {
+                    Ok(content) => content,
+                    Err(e) => format!("Could not read content {}: {}", file_name, e),
+                };
+                store_file(file_name.to_string(), content).await;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn prompt_user() -> bool {
@@ -133,38 +169,54 @@ async fn classic_mode(opts: &Opts) -> Result<(), std::io::Error> {
         println!("Invalid input. Please enter <GLOB> <QUERY> <SUBSTITUTE>");
         return Ok(());
     }
-    let query = opts.query.clone().unwrap();
-    let substitute = opts.substitute.clone().unwrap();
-    let glob = opts.glob.clone().unwrap();
+    let query = &opts.query;
+    let substitute = &opts.substitute;
+    let glob = opts.glob.clone();
 
     println!(
         "rplc {} with {} in {}:\n",
-        &query
+        query
             .clone()
+            .unwrap_or("".to_string())
             .stylize()
             .with(crossterm::style::Color::Yellow)
             .bold(),
-        &substitute
+        substitute
             .clone()
+            .unwrap_or("".to_string())
             .stylize()
             .with(crossterm::style::Color::Green)
             .bold(),
-        &glob.clone().stylize().with(crossterm::style::Color::Green)
+        &glob
+            .clone()
+            .unwrap_or("".to_string())
+            .stylize()
+            .with(crossterm::style::Color::Green)
     );
+
+    let glob = glob.unwrap_or("".to_string());
 
     let files = list_glob_files(&glob)?;
     for file in &files {
         if !file.is_file() {
             continue;
         }
-        for line in display_changes_in_file(&query, &substitute, file.to_str().unwrap()).await? {
+        let (lines, _) =
+            display_changes_in_file(query.clone(), substitute.clone(), file.to_str().unwrap())
+                .await?;
+        for line in &lines {
             println!("{}", line);
         }
     }
 
     if opts.write || prompt_user() {
         for file in &files {
-            replace_in_file(&query, &substitute, file.to_str().unwrap()).await?;
+            replace_in_file(
+                query.clone().unwrap_or("".to_string()),
+                substitute.clone().unwrap_or("".to_string()),
+                file.to_str().unwrap(),
+            )
+            .await?;
         }
         println!("{:?} replacements were made.", REPLACED_COUNT);
         return Ok(());
@@ -195,8 +247,10 @@ fn handle_key_event(event: crossterm::event::KeyEvent, user_query: &String) -> S
 
 async fn interactive_mode() -> Result<(), std::io::Error> {
     execute!(stdout(), EnterAlternateScreen)?;
+    execute!(stdout(), Clear(ClearType::All))?;
+    get_screen_size()?;
     enable_raw_mode()?;
-    let mut user_query = "**/*".to_string();
+    let mut user_query = "src/**/*".to_string();
     handle_user_query(&user_query).await?;
     loop {
         if poll(Duration::from_millis(500))? {
@@ -246,195 +300,79 @@ fn print_help() -> Result<(), Error> {
         "<query>".stylize().yellow().bold(),
         "<replacement>".stylize().green().bold()
     );
-    print_at(0, 0, &help)
+    print_at(0, 0, &help)?;
+    let scroll_help = format!("↑/↓ to scroll, ESC to exit, CTRL+C to exit, ENTER to write changes");
+    print_at(
+        screen_width() as u16 - scroll_help.len() as u16,
+        (screen_height() - 1) as u16,
+        &scroll_help,
+    )
 }
 
 async fn handle_search_and_replace(
-    glob_search: &str,
-    query: &str,
-    replacement: &str,
+    search: Option<String>,
+    replacement: Option<String>,
 ) -> Result<(), std::io::Error> {
-    // hide cursor
-    execute!(stdout(), crossterm::cursor::Hide)?;
-
     REPLACED_COUNT.store(0, Ordering::SeqCst);
     FILE_COUNT.store(0, Ordering::SeqCst);
-    let (width, height) = crossterm::terminal::size()?;
     let scroll_offset = SCROLL_OFFSET.load(Ordering::SeqCst);
-
-    execute!(stdout(), Clear(ClearType::All))?;
-    print_help()?;
+    let height = screen_height();
+    let width = screen_width();
 
     let mut i = 0;
     TOTAL_LINES.store(0, Ordering::SeqCst);
-    for file in list_glob_files(glob_search)?.iter() {
-        if !file.is_file() {
-            continue;
-        }
-        let lines = display_changes_in_file(query, replacement, file.to_str().unwrap()).await?;
-        for line in &lines {
+
+    let files_names = get_files_names().await;
+
+    for file_name in files_names.iter() {
+        let (result, changes) =
+            display_changes_in_file(search.clone(), replacement.clone(), file_name).await?;
+
+        let decorated = decorate_file_content(
+            file_name.to_string(),
+            result.clone(),
+            &format!("{} changes", changes),
+        );
+
+        for line in &decorated {
             i += 1;
-            if i >= scroll_offset + height as usize - 8 {
+            if i >= scroll_offset + height - 6 {
                 break;
             }
             if i < scroll_offset {
                 continue;
             }
-            print_at(0, (i + 6 - scroll_offset) as u16, &line)?;
+            print_at(0, (i + 4 - scroll_offset) as u16, &line)?;
         }
-        TOTAL_LINES.fetch_add(lines.len(), Ordering::SeqCst);
+        i += 1;
+        TOTAL_LINES.fetch_add(result.len(), Ordering::SeqCst);
     }
-    print_at(
-        0,
-        2,
-        glob_search.stylize().blue().bold().to_string().as_str(),
-    )?;
-    print_at(
-        (glob_search.len() + 1) as u16,
-        2,
-        query.stylize().yellow().bold().to_string().as_str(),
-    )?;
-    print_at(
-        0,
-        4,
-        &format!(
-            "{} matches in {} files:",
-            REPLACED_COUNT
-                .load(std::sync::atomic::Ordering::SeqCst)
-                .to_string()
-                .stylize()
-                .green()
-                .bold(),
-            FILE_COUNT
-                .load(std::sync::atomic::Ordering::SeqCst)
-                .to_string()
-                .stylize()
-                .green()
-                .bold(),
-        ),
-    )?;
-    cursor_at(glob_search.len() as u16 + 1 + query.len() as u16, 2);
-    if query == replacement {
-        return Ok(());
-    }
-    print_at(
-        (glob_search.len() + 1 + query.len() + 1) as u16,
-        2,
-        replacement.stylize().green().bold().to_string().as_str(),
-    )?;
-
     display_scrollbar(
         scroll_offset,
         TOTAL_LINES.load(Ordering::SeqCst),
-        6,
-        (height - 6) as usize,
-        (width - 1) as usize,
+        5,
+        height - 6,
+        width - 1,
     )?;
-    let scroll_help = format!("↑/↓ to scroll, ESC to exit, CTRL+C to exit, ENTER to write changes");
-
-    print_at(width - scroll_help.len() as u16, height - 1, &scroll_help)?;
-
-    execute!(stdout(), crossterm::cursor::Show)?;
-    cursor_at(
-        glob_search.len() as u16 + 1 + query.len() as u16 + 1 + replacement.len() as u16,
-        2,
-    );
 
     Ok(())
 }
 
 async fn handle_user_query(user_query: &String) -> Result<(), std::io::Error> {
-    execute!(stdout(), Clear(ClearType::Purge))?;
-    execute!(stdout(), Clear(ClearType::All))?;
-        
-    let split = split_query(user_query);
-    
-    match (&split.glob, &split.search, &split.replace) {
-        (Some(glob), None, None) => handle_glob_search(&glob).await?,
-        (Some(glob), Some(search), None) => handle_search_and_replace(&glob, &search, &search).await?,
-        (Some(glob), Some(search), Some(replace)) => handle_search_and_replace(&glob, &search, &replace).await?,
-        _ => handle_search_and_replace("", "", "").await?,
-    }
-
-    // let split_query: Vec<&str> = user_query.split(" ").collect();
-    REPLACED_COUNT.store(0, Ordering::SeqCst);
-    FILE_COUNT.store(0, Ordering::SeqCst);
-
-    // match split_query.len() {
-    //     1 => handle_glob_search(user_query).await?,
-    //     2 => {
-    //         if split_query[1].len() > 0 {
-    //             handle_search_and_replace(split_query[0], split_query[1], split_query[1]).await?
-    //         } else {
-    //             handle_glob_search(user_query).await?
-    //         }
-    //     }
-    //     3 => handle_search_and_replace(split_query[0], split_query[1], split_query[2]).await?,
-    //     _ => handle_search_and_replace(split_query[0], split_query[1], split_query[2]).await?,
-    // }
-
-    Ok(())
-}
-
-fn cursor_at(x: u16, y: u16) {
-    execute!(stdout(), crossterm::cursor::MoveTo(x, y)).unwrap();
-}
-
-async fn handle_glob_search(user_query: &String) -> Result<(), Error> {
-    let (_, height) = crossterm::terminal::size()?;
-    execute!(stdout(), Clear(ClearType::Purge))?;
-    execute!(stdout(), Clear(ClearType::All))?;
-
     print_help()?;
+    let split = split_query(user_query);
+    clear_results()?;
+    split.print()?;
 
-    if user_query.is_empty() {
-        cursor_at(0, 2);
-        return Ok(());
-    }
-    let files = list_glob_files(&user_query.trim())?;
+    let glob = match &split.glob {
+        Some(glob) => glob,
+        None => return Ok(()),
+    };
 
-    let list_title = format!(
-        "Found {}{} files: ",
-        files.len(),
-        if files.len() >= 100 { "+" } else { "" }
-    );
-    cursor_at(0, 2);
-    execute!(stdout(), Clear(ClearType::CurrentLine))?;
+    store_glob_files(glob).await?;
 
-    print_at(0, 4, &list_title)?;
-    for (i, file) in files.iter().enumerate() {
-        print_at(
-            0,
-            (i + 6) as u16,
-            file.to_str().unwrap_or(
-                "Error parsing file"
-                    .to_string()
-                    .stylize()
-                    .red()
-                    .to_string()
-                    .as_str(),
-            ),
-        )?;
-        if i >= height as usize - 5 {
-            break;
-        }
-    }
-
-    print_at(
-        0,
-        2,
-        user_query
-            .to_string()
-            .stylize()
-            .blue()
-            .bold()
-            .to_string()
-            .as_str(),
-    )?;
-
-    cursor_at(user_query.len() as u16, 2);
-
-    Ok(())
+    handle_search_and_replace(split.search.clone(), split.replace.clone()).await?;
+    split.restore_cursor()
 }
 
 #[tokio::main]

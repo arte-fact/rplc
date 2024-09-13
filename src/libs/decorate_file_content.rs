@@ -2,21 +2,21 @@ use crossterm::style::{Color, Stylize};
 
 pub fn happend_changes_in_file(
     lines: &[&str],
-    query: &str,
-    substitute: &str,
+    query: String,
+    substitute: String,
 ) -> (Vec<String>, usize) {
     let mut decorated = vec![];
     let mut skipped = false;
     let mut changes = 0;
     for (i, line) in lines.iter().enumerate() {
-        if line.contains(query) {
+        if line.contains(&query) {
             skipped = false;
             let mut line = line.replace(
-                query,
-                &format!("{}", substitute.stylize().with(Color::Green).bold()),
+                &query,
+                &format!("{}", substitute.clone().stylize().with(Color::Green).bold()),
             );
 
-            changes += line.matches(substitute).count();
+            changes += line.matches(&substitute.clone()).count();
             line = format!(
                 "{: >4} {}",
                 (i + 1).to_string().stylize().with(Color::DarkGrey),
@@ -90,8 +90,8 @@ fn handle_non_empty() {
 #[test]
 fn handle_changes() {
     let lines = vec!["line 1", "line 2", "line 3"];
-    let query = "line";
-    let substitute = "test";
+    let query = "line".to_string();
+    let substitute = "test".to_string();
     assert_eq!(
         happend_changes_in_file(&lines, query, substitute),
         (

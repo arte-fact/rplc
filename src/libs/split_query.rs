@@ -2,9 +2,9 @@ use std::io::Error;
 
 use crossterm::style::Stylize;
 
-use super::terminal::{clear_lines, cursor_at, print_at, show_cursor};
+use super::terminal::{clear_lines, print_at};
 
-#[derive(Debug, PartialEq, Default)]
+#[derive(Debug, PartialEq, Default, Clone)]
 pub struct QuerySplit {
     pub query: Option<String>,
     pub glob: Option<String>,
@@ -44,8 +44,8 @@ impl QuerySplit {
     }
 
     pub fn restore_cursor(&self) -> Result<(), Error> {
-        cursor_at(self.len() as u16, 2)?;
-        show_cursor()
+        print_at(self.len() as u16, 2, "█")
+
     }
 }
 

@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use chrono::Local;
 use clap::Parser;
 use crossterm::event::{poll, read, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::execute;
@@ -22,9 +23,12 @@ use tokio::fs::read_to_string;
 use libs::decorate_file_content::{decorate_file_content, happend_changes_in_file};
 
 use self::libs::scrollbar::display_scrollbar;
-use self::libs::split_query::split_query;
-use self::libs::state::{clear_files, get_file, get_files_names, store_file};
-use self::libs::terminal::{clear_results, get_screen_size, print_at, screen_height, screen_width};
+use self::libs::split_query::{split_query, QuerySplit};
+use self::libs::state::{
+    clear_files, get_file, get_files_names, get_key_value, store_file, store_key_value,
+};
+use self::libs::syntax_highlight::highlight_file;
+use self::libs::terminal::{clear_results, get_screen_size, hide_cursor, print_at, screen_height, screen_width};
 
 static SCROLL_OFFSET: AtomicUsize = AtomicUsize::new(0);
 static FILE_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -107,7 +111,7 @@ fn list_glob_files(glob_pattern: &str) -> Result<Vec<PathBuf>, std::io::Error> {
             Ok(vec![])
         }
         Ok(files) => {
-            let files: Vec<PathBuf> = files.take(100).filter_map(|x| x.ok()).collect();
+            let files: Vec<PathBuf> = files.filter_map(|x| x.ok()).collect();
             Ok(files)
         }
     }
@@ -121,16 +125,13 @@ async fn store_glob_files(glob_pattern: &str) -> Result<(), std::io::Error> {
             return Ok(());
         }
         Ok(files) => {
-            let files: Vec<PathBuf> = files.take(50).filter_map(|x| x.ok()).collect();
+            let files: Vec<PathBuf> = files.filter_map(|x| x.ok()).collect();
             for file in files.iter() {
                 if !file.is_file() {
                     continue;
                 }
                 let file_name = file.to_str().unwrap_or("Could not read file name");
-                let content = match read_to_string(file).await {
-                    Ok(content) => content,
-                    Err(e) => format!("Could not read content {}: {}", file_name, e),
-                };
+                let content = highlight_file(file_name).unwrap_or("Highlight failed".to_string());
                 store_file(file_name.to_string(), content).await;
             }
         }
@@ -246,6 +247,7 @@ fn handle_key_event(event: crossterm::event::KeyEvent, user_query: &String) -> S
 }
 
 async fn interactive_mode() -> Result<(), std::io::Error> {
+    hide_cursor()?;
     execute!(stdout(), EnterAlternateScreen)?;
     execute!(stdout(), Clear(ClearType::All))?;
     get_screen_size()?;
@@ -272,24 +274,31 @@ async fn interactive_mode() -> Result<(), std::io::Error> {
                         continue;
                     }
                     SCROLL_OFFSET.fetch_add(10, Ordering::SeqCst);
-                    handle_user_query(&user_query).await?;
+                    handle_user_query_with_errors(&user_query).await;
                 }
                 Event::Key(event) if event.code == KeyCode::Up => {
                     if SCROLL_OFFSET.load(Ordering::SeqCst) == 0 {
                         continue;
                     }
                     SCROLL_OFFSET.fetch_sub(10, Ordering::SeqCst);
-                    handle_user_query(&user_query).await?;
+                    handle_user_query_with_errors(&user_query).await;
                 }
                 Event::Key(event) => {
                     user_query = handle_key_event(event, &user_query.clone());
-                    handle_user_query(&user_query).await?;
+                    handle_user_query_with_errors(&user_query).await;
                 }
                 _ => (),
             }
         } else {
             // Timeout expired and no `Event` is available
         }
+    }
+}
+
+async fn handle_user_query_with_errors(user_query: &String) {
+    match handle_user_query(&user_query).await {
+        Ok(_) => (),
+        Err(e) => debug!("Error: {}", e),
     }
 }
 
@@ -318,6 +327,7 @@ async fn handle_search_and_replace(
     let scroll_offset = SCROLL_OFFSET.load(Ordering::SeqCst);
     let height = screen_height();
     let width = screen_width();
+    clear_results()?;
 
     let mut i = 0;
     TOTAL_LINES.store(0, Ordering::SeqCst);
@@ -328,10 +338,14 @@ async fn handle_search_and_replace(
         let (result, changes) =
             display_changes_in_file(search.clone(), replacement.clone(), file_name).await?;
 
+        if changes == 0 && search.is_some() {
+            continue;
+        }
+
         let decorated = decorate_file_content(
             file_name.to_string(),
             result.clone(),
-            &format!("{} changes", changes),
+            &format!("{} matches", changes),
         );
 
         for line in &decorated {
@@ -342,11 +356,22 @@ async fn handle_search_and_replace(
             if i < scroll_offset {
                 continue;
             }
-            print_at(0, (i + 4 - scroll_offset) as u16, &line)?;
+            print_at(0, (i + 5 - scroll_offset) as u16, &line)?;
         }
         i += 1;
         TOTAL_LINES.fetch_add(result.len(), Ordering::SeqCst);
     }
+
+    match (search, replacement) {
+        (Some(_), Some(_)) => {
+            print_at(0, 4, &format!("{} changes in {} files:", FILE_COUNT.load(Ordering::SeqCst), files_names.len()))?;
+        },
+        (Some(_), None) => {
+            print_at(0, 4, &format!("{} matches in {} files:", FILE_COUNT.load(Ordering::SeqCst), files_names.len()))?;
+        },
+        _ => print_at(0, 4, &format!("{} files found:", files_names.len()))?,
+    }
+
     display_scrollbar(
         scroll_offset,
         TOTAL_LINES.load(Ordering::SeqCst),
@@ -361,18 +386,40 @@ async fn handle_search_and_replace(
 async fn handle_user_query(user_query: &String) -> Result<(), std::io::Error> {
     print_help()?;
     let split = split_query(user_query);
-    clear_results()?;
     split.print()?;
 
+    let last_time = get_key_value("time").await.unwrap_or("".to_string());
+    let last_query = get_key_value("user_query").await.unwrap_or("".to_string());
+
+    store_key_value("user_query".to_string(), user_query.clone()).await;
+    store_key_value("time".to_string(), Local::now().to_string()).await;
+
+    let elapsed = Local::now().timestamp() - last_time.parse::<i64>().unwrap_or(0);
+
+    if elapsed < 300 && user_query == &last_query {
+        return Ok(());
+    }
+    clear_results()?;
+    print_at(0, 4, "Loading...")?;
+
+    tokio::task::spawn(async move {
+        debug!("Spawning task");
+        match display_results(split).await {
+            Ok(_) => (),
+            Err(e) => debug!("Error: {}", e),
+        };
+    });
+
+    Ok(())
+}
+
+async fn display_results(split: QuerySplit) -> Result<(), std::io::Error> {
     let glob = match &split.glob {
         Some(glob) => glob,
         None => return Ok(()),
     };
-
     store_glob_files(glob).await?;
-
-    handle_search_and_replace(split.search.clone(), split.replace.clone()).await?;
-    split.restore_cursor()
+    handle_search_and_replace(split.search.clone(), split.replace.clone()).await
 }
 
 #[tokio::main]

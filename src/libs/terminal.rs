@@ -22,6 +22,10 @@ pub fn show_cursor() -> Result<(), Error> {
     execute!(stdout(), crossterm::cursor::Show)
 }
 
+pub fn hide_cursor() -> Result<(), Error> {
+    execute!(stdout(), crossterm::cursor::Hide)
+}
+
 pub fn clear_lines(lines: &[u16]) -> Result<(), Error> {
     for y in lines.iter() {
         execute!(
@@ -34,7 +38,7 @@ pub fn clear_lines(lines: &[u16]) -> Result<(), Error> {
 }
 
 pub fn clear_results() -> Result<(), Error> {
-    let lines = (3..(screen_height() - 1) as u16).collect::<Vec<u16>>();
+    let lines = (3..(screen_height() - 2) as u16).collect::<Vec<u16>>();
     clear_lines(&lines)
 }
 

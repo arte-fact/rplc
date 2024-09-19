@@ -3,6 +3,7 @@ extern crate lazy_static;
 
 mod libs;
 
+use std::cmp::max;
 use std::io::{stdout, Error};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -131,7 +132,14 @@ async fn store_glob_files(glob_pattern: &str) -> Result<(), std::io::Error> {
                     continue;
                 }
                 let file_name = file.to_str().unwrap_or("Could not read file name");
-                let content = highlight_file(file_name).unwrap_or("Highlight failed".to_string());
+                let content = match read_to_string(file).await {
+                    Ok(content) => content,
+                    Err(e) => file_name.to_string() + &format!(": {}", e),
+                };
+                // let content = match highlight_file(file_name) {
+                //     Ok(content) => content,
+                //     Err(e) => file_name.to_string() + &format!(": {}", e)
+                // };
                 store_file(file_name.to_string(), content).await;
             }
         }
@@ -253,7 +261,7 @@ async fn interactive_mode() -> Result<(), std::io::Error> {
     get_screen_size()?;
     enable_raw_mode()?;
     let mut user_query = "src/**/*".to_string();
-    handle_user_query(&user_query).await?;
+    handle_user_query_with_errors(&user_query).await;
     loop {
         if poll(Duration::from_millis(500))? {
             match read()? {
@@ -274,14 +282,16 @@ async fn interactive_mode() -> Result<(), std::io::Error> {
                         continue;
                     }
                     SCROLL_OFFSET.fetch_add(10, Ordering::SeqCst);
-                    handle_user_query_with_errors(&user_query).await;
+                    let split = split_query(&user_query);
+                    handle_search_and_replace(split.search.clone(), split.replace.clone()).await?;
                 }
                 Event::Key(event) if event.code == KeyCode::Up => {
                     if SCROLL_OFFSET.load(Ordering::SeqCst) == 0 {
                         continue;
                     }
                     SCROLL_OFFSET.fetch_sub(10, Ordering::SeqCst);
-                    handle_user_query_with_errors(&user_query).await;
+                    let split = split_query(&user_query);
+                    handle_search_and_replace(split.search.clone(), split.replace.clone()).await?;
                 }
                 Event::Key(event) => {
                     user_query = handle_key_event(event, &user_query.clone());
@@ -356,7 +366,7 @@ async fn handle_search_and_replace(
             if i < scroll_offset {
                 continue;
             }
-            print_at(0, (i + 5 - scroll_offset) as u16, &line)?;
+            print_at(0, (max(i + 5 - scroll_offset, 6)) as u16, &line)?;
         }
         i += 1;
         TOTAL_LINES.fetch_add(result.len(), Ordering::SeqCst);

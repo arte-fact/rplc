@@ -1,31 +1,23 @@
-use std::io::BufRead;
-use syntect::easy::HighlightFile;
+use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use syntect::util::as_24_bit_terminal_escaped;
 
-pub fn highlight_file(path: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let ss = SyntaxSet::load_defaults_newlines();
-    let mut ts = ThemeSet::load_defaults();
-    ts.add_from_folder("assets/themes")?;
+lazy_static! {
+    static ref SYNTAX_SET: SyntaxSet = SyntaxSet::load_defaults_newlines();
+    static ref THEME_SET: ThemeSet = ThemeSet::load_defaults();
+}
 
-    let mut highlighter = HighlightFile::new(
-        path,
-        &ss,
-        &ts.themes["Nord"],
-    )?;
+pub fn highlight_line(line: &str, lang: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let syntax = SYNTAX_SET.find_syntax_by_extension(lang).unwrap_or_else(|| SYNTAX_SET.find_syntax_plain_text());
 
-    let mut line = String::new();
-    let mut result = String::new();
-    while highlighter.reader.read_line(&mut line)? > 0 {
-        {
-            let regions: Vec<(Style, &str)> = highlighter
-                .highlight_lines
-                .highlight_line(&line, &ss)?;
+    let mut highlighter = HighlightLines::new(
+        syntax,
+        &THEME_SET.themes["base16-ocean.dark"],
+    );
 
-            result.push_str( &format!("{}", as_24_bit_terminal_escaped(&regions[..], true)));
-        }
-        line.clear();
-    }
-    Ok(result)
+    let regions: Vec<(Style, &str)> = highlighter
+        .highlight_line(line, &SYNTAX_SET)?;
+
+    Ok(format!("{}", as_24_bit_terminal_escaped(&regions[..], true)))
 }

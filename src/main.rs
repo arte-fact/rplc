@@ -23,13 +23,15 @@ use tokio::fs::read_to_string;
 
 use libs::decorate_file_content::{decorate_file_content, happend_changes_in_file};
 
-use self::libs::scrollbar::display_scrollbar;
 use self::libs::split_query::{split_query, QuerySplit};
 use self::libs::state::{
     clear_files, get_file, get_files_names, get_key_value, store_file, store_key_value,
 };
-use self::libs::syntax_highlight::highlight_file;
-use self::libs::terminal::{clear_results, get_screen_size, hide_cursor, print_at, screen_height, screen_width};
+use self::libs::syntax_highlight::highlight_line;
+use self::libs::terminal::{
+    clear_results, get_screen_size, hide_cursor, print_at, screen_height, screen_width,
+};
+use self::libs::ui::window::{create_and_store_window, get_window, WindowAttr};
 
 static SCROLL_OFFSET: AtomicUsize = AtomicUsize::new(0);
 static FILE_COUNT: AtomicUsize = AtomicUsize::new(0);
@@ -61,10 +63,15 @@ async fn display_changes_in_file(
     path: &str,
 ) -> Result<(Vec<String>, usize), std::io::Error> {
     let content = get_file(path).await.unwrap_or("No content.".to_string());
+    let extension = path.split('.').last().unwrap_or("txt");
+    let content = content
+        .lines()
+        .map(|x| highlight_line(x, extension).unwrap_or(x.to_string()))
+        .collect();
 
     let query = match search {
         Some(query) => query,
-        None => return Ok((content.lines().map(|x| x.to_string()).collect(), 0)),
+        None => return Ok((content, 0)),
     };
 
     let substitute = match substitute {
@@ -72,11 +79,7 @@ async fn display_changes_in_file(
         None => query.clone(),
     };
 
-    let (result, changes) = happend_changes_in_file(
-        content.lines().collect::<Vec<&str>>().as_slice(),
-        query,
-        substitute,
-    );
+    let (result, changes): _ = happend_changes_in_file(content, &query, &substitute);
 
     REPLACED_COUNT.fetch_add(changes, Ordering::SeqCst);
     if changes != 0 {
@@ -136,10 +139,6 @@ async fn store_glob_files(glob_pattern: &str) -> Result<(), std::io::Error> {
                     Ok(content) => content,
                     Err(e) => file_name.to_string() + &format!(": {}", e),
                 };
-                // let content = match highlight_file(file_name) {
-                //     Ok(content) => content,
-                //     Err(e) => file_name.to_string() + &format!(": {}", e)
-                // };
                 store_file(file_name.to_string(), content).await;
             }
         }
@@ -276,22 +275,16 @@ async fn interactive_mode() -> Result<(), std::io::Error> {
                     return Ok(());
                 }
                 Event::Key(event) if event.code == KeyCode::Down => {
-                    if TOTAL_LINES.load(Ordering::SeqCst)
-                        <= SCROLL_OFFSET.load(Ordering::SeqCst) + 10
-                    {
-                        continue;
+                    match get_window("result").await {
+                        Some(window) => window.clone().scroll_by(1)?.draw()?,
+                        None => return Ok(()),
                     }
-                    SCROLL_OFFSET.fetch_add(10, Ordering::SeqCst);
-                    let split = split_query(&user_query);
-                    handle_search_and_replace(split.search.clone(), split.replace.clone()).await?;
                 }
                 Event::Key(event) if event.code == KeyCode::Up => {
-                    if SCROLL_OFFSET.load(Ordering::SeqCst) == 0 {
-                        continue;
+                    match get_window("result").await {
+                        Some(window) => window.clone().scroll_by(-1)?.draw()?,
+                        None => return Ok(()),
                     }
-                    SCROLL_OFFSET.fetch_sub(10, Ordering::SeqCst);
-                    let split = split_query(&user_query);
-                    handle_search_and_replace(split.search.clone(), split.replace.clone()).await?;
                 }
                 Event::Key(event) => {
                     user_query = handle_key_event(event, &user_query.clone());
@@ -336,7 +329,6 @@ async fn handle_search_and_replace(
     FILE_COUNT.store(0, Ordering::SeqCst);
     let scroll_offset = SCROLL_OFFSET.load(Ordering::SeqCst);
     let height = screen_height();
-    let width = screen_width();
     clear_results()?;
 
     let mut i = 0;
@@ -344,52 +336,76 @@ async fn handle_search_and_replace(
 
     let files_names = get_files_names().await;
 
-    for file_name in files_names.iter() {
-        let (result, changes) =
-            display_changes_in_file(search.clone(), replacement.clone(), file_name).await?;
+    for file_name in files_names.clone().iter() {
+        fun_name(
+            &search,
+            &replacement,
+            &file_name,
+            &mut i,
+            scroll_offset,
+            height,
+        )
+        .await?;
+    } 
 
-        if changes == 0 && search.is_some() {
+    let resume = match (search, replacement) {
+        (Some(_), Some(_)) => format!(
+            " {} changes in {} files: ",
+            FILE_COUNT.load(Ordering::SeqCst),
+            files_names.len()
+        ),
+        (Some(_), None) => format!(
+            " {} matches in {} files: ",
+            FILE_COUNT.load(Ordering::SeqCst),
+            files_names.len()
+        ),
+        _ => format!(" {} files found: ", files_names.len()),
+    }
+    .black()
+    .on_green()
+    .bold()
+    .to_string();
+
+    // display_files_tree(6, 0, files_names)?;
+
+    print_at(0, 4, &resume)?;
+
+
+
+    Ok(())
+}
+
+async fn fun_name(
+    search: &Option<String>,
+    replacement: &Option<String>,
+    file_name: &String,
+    i: &mut usize,
+    scroll_offset: usize,
+    height: usize,
+) -> Result<(), Error> {
+    let (result, changes) =
+        display_changes_in_file(search.clone(), replacement.clone(), file_name).await?;
+    if changes == 0 && search.is_some() {
+        return Ok(());
+    }
+    let decorated =
+        decorate_file_content(file_name, result.clone(), &format!("{} matches", changes));
+    for line in &decorated {
+        *i += 1;
+        if *i >= scroll_offset + height - 6 {
+            break;
+        }
+        if *i < scroll_offset {
             continue;
         }
-
-        let decorated = decorate_file_content(
-            file_name.to_string(),
-            result.clone(),
-            &format!("{} matches", changes),
-        );
-
-        for line in &decorated {
-            i += 1;
-            if i >= scroll_offset + height - 6 {
-                break;
-            }
-            if i < scroll_offset {
-                continue;
-            }
-            print_at(0, (max(i + 5 - scroll_offset, 6)) as u16, &line)?;
-        }
-        i += 1;
-        TOTAL_LINES.fetch_add(result.len(), Ordering::SeqCst);
+        print_at(
+            0,
+            (max(*i + 5 - scroll_offset, 6)) as u16,
+            &format!("{: <80}", &line).to_string(),
+        )?;
     }
-
-    match (search, replacement) {
-        (Some(_), Some(_)) => {
-            print_at(0, 4, &format!("{} changes in {} files:", FILE_COUNT.load(Ordering::SeqCst), files_names.len()))?;
-        },
-        (Some(_), None) => {
-            print_at(0, 4, &format!("{} matches in {} files:", FILE_COUNT.load(Ordering::SeqCst), files_names.len()))?;
-        },
-        _ => print_at(0, 4, &format!("{} files found:", files_names.len()))?,
-    }
-
-    display_scrollbar(
-        scroll_offset,
-        TOTAL_LINES.load(Ordering::SeqCst),
-        5,
-        height - 6,
-        width - 1,
-    )?;
-
+    *i += 1;
+    TOTAL_LINES.fetch_add(result.len(), Ordering::SeqCst);
     Ok(())
 }
 
@@ -409,11 +425,8 @@ async fn handle_user_query(user_query: &String) -> Result<(), std::io::Error> {
     if elapsed < 300 && user_query == &last_query {
         return Ok(());
     }
-    clear_results()?;
-    print_at(0, 4, "Loading...")?;
 
     tokio::task::spawn(async move {
-        debug!("Spawning task");
         match display_results(split).await {
             Ok(_) => (),
             Err(e) => debug!("Error: {}", e),
@@ -429,7 +442,36 @@ async fn display_results(split: QuerySplit) -> Result<(), std::io::Error> {
         None => return Ok(()),
     };
     store_glob_files(glob).await?;
-    handle_search_and_replace(split.search.clone(), split.replace.clone()).await
+    // handle_search_and_replace(split.search.clone(), split.replace.clone()).await
+    
+    let first = "src/main.rs";
+    let content = match get_file(&first).await {
+        Some(content) => content,
+        None => return Ok(()),
+    };
+
+    let top = 4;
+    let height = screen_height() - top;
+    let width = screen_width();
+
+    let highlight = match first.split('.').last() {
+        Some(highlight) => Some(highlight.to_string()),
+        None => None,
+    };
+
+    create_and_store_window("result".to_string(), vec![
+        WindowAttr::Title(first.to_string()),
+        WindowAttr::Content(content.lines().map(|x| x.to_string()).collect()),
+        WindowAttr::Footer("Footer".to_string()),
+        WindowAttr::Position((0, top)),
+        WindowAttr::Size((width - 1, height - 1)),
+        WindowAttr::Decorated(true),
+        WindowAttr::Scrollable(true),
+        WindowAttr::Scroll(0),
+        WindowAttr::Highlight(highlight),
+    ]).await?.draw()?;
+
+    Ok(())
 }
 
 #[tokio::main]

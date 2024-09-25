@@ -4,3 +4,5 @@ pub mod scrollbar;
 pub mod terminal;
 pub mod state;
 pub mod syntax_highlight;
+pub mod file_tree;
+pub mod ui;

@@ -1,9 +1,9 @@
 use crossterm::style::{Color, Stylize};
 
 pub fn happend_changes_in_file(
-    lines: &[&str],
-    query: String,
-    substitute: String,
+    lines: Vec<String>,
+    query: &str,
+    substitute: &str,
 ) -> (Vec<String>, usize) {
     let mut decorated = vec![];
     let mut skipped = false;
@@ -13,12 +13,12 @@ pub fn happend_changes_in_file(
             skipped = false;
             let mut line = line.replace(
                 &query,
-                &format!("{}", substitute.clone().stylize().with(Color::Green).bold()),
+                &format!("{}", substitute.stylize().with(Color::Green).bold()),
             );
 
-            changes += line.matches(&substitute.clone()).count();
+            changes += line.matches(&substitute).count();
             line = format!(
-                "{: >4} {}",
+                "{: >4} {: <80}",
                 (i + 1).to_string().stylize().with(Color::DarkGrey),
                 line
             );
@@ -41,7 +41,7 @@ pub fn happend_changes_in_file(
 }
 
 pub fn decorate_file_content(
-    file_name: String,
+    file_name: &str,
     content: Vec<String>,
     footer_content: &str,
 ) -> Vec<String> {
@@ -60,7 +60,7 @@ pub fn decorate_file_content(
 
 #[test]
 fn handle_empty() {
-    let file_name = "file.txt".to_string();
+    let file_name = "file.txt";
     let content = vec![];
     assert_eq!(
         decorate_file_content(file_name, content, "test"),
@@ -74,7 +74,7 @@ fn handle_empty() {
 
 #[test]
 fn handle_non_empty() {
-    let file_name = "file.txt".to_string();
+    let file_name = "file.txt";
     let content = vec!["line 1".to_string(), "line 2".to_string()];
     assert_eq!(
         decorate_file_content(file_name, content, "test"),
@@ -89,11 +89,11 @@ fn handle_non_empty() {
 
 #[test]
 fn handle_changes() {
-    let lines = vec!["line 1", "line 2", "line 3"];
-    let query = "line".to_string();
-    let substitute = "test".to_string();
+    let lines = vec!["line 1".to_string(), "line 2".to_string(), "line 3".to_string()];
+    let query = "line";
+    let substitute = "test";
     assert_eq!(
-        happend_changes_in_file(&lines, query, substitute),
+        happend_changes_in_file(lines, query, substitute),
         (
             vec![
                 "\u{1b}[38;5;8m1\u{1b}[39m \u{1b}[38;5;10m\u{1b}[1mtest\u{1b}[0m 1".to_string(),

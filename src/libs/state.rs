@@ -18,8 +18,7 @@ pub async fn get_file(key: &str) -> Option<String> {
 
 pub async fn get_files_names() -> Vec<String> {
     let state = STATE.lock().await;
-    state
-        .keys()
+    state.keys()
         .filter(|x| x.starts_with("file_"))
         .cloned()
         .map(|x| x.replace("file_", ""))

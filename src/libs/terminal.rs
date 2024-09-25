@@ -38,7 +38,7 @@ pub fn clear_lines(lines: &[u16]) -> Result<(), Error> {
 }
 
 pub fn clear_results() -> Result<(), Error> {
-    let lines = (3..(screen_height() - 1) as u16).collect::<Vec<u16>>();
+    let lines = (6..(screen_height() - 1) as u16).collect::<Vec<u16>>();
     clear_lines(&lines)
 }
 

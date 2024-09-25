@@ -1,4 +1,5 @@
 use crossterm::execute;
+use std::cmp::min;
 use std::io::{stdout, Error};
 
 pub fn display_scrollbar(
@@ -8,7 +9,10 @@ pub fn display_scrollbar(
     height: usize,
     left: usize,
 ) -> Result<(), Error> {
-    let carret_position = (offset as f64 / total as f64) * height as f64;
+    let carret_position = min(
+        (((offset as f64) / (total as f64 - height as f64)) * height as f64) as usize,
+        height as usize - 1,
+    );
 
     for i in 0..height {
         let char = if i == carret_position as usize {

@@ -1,4 +1,4 @@
-use std::cmp::{max, min};
+use std::cmp::max;
 use std::collections::HashMap;
 use std::io::Error;
 use std::sync::Arc;
@@ -6,11 +6,10 @@ use std::sync::Arc;
 use crossterm::style::Stylize;
 use tokio::sync::Mutex;
 
-use crate::debug;
 use crate::libs::decorate_file_content::decorate_file_content;
 use crate::libs::scrollbar::display_scrollbar;
 use crate::libs::syntax_highlight::highlight_line;
-use crate::libs::terminal::print_at;
+use crate::libs::terminal::{print_at, screen_width};
 
 lazy_static! {
     static ref WINDOWS: Arc<Mutex<HashMap<String, Window>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -19,17 +18,7 @@ lazy_static! {
 pub async fn create_and_store_window(key: String, attrs: Vec<WindowAttr>) -> Result<Window, Error> {
     let mut window = Window::default();
     for attr in attrs {
-        match attr {
-            WindowAttr::Title(title) => window.title = title,
-            WindowAttr::Content(content) => window.content = content,
-            WindowAttr::Footer(footer) => window.footer = footer,
-            WindowAttr::Position(position) => window.position = position,
-            WindowAttr::Size(size) => window.size = size,
-            WindowAttr::Decorated(decorated) => window.decorated = decorated,
-            WindowAttr::Scrollable(scrollable) => window.scrollable = scrollable,
-            WindowAttr::Scroll(scroll) => window.scroll_offset = scroll,
-            WindowAttr::Highlight(highlight) => window.code_highlight = highlight,
-        }
+        window.update_attribute(attr)?;
     }
     store_window(key, window.clone()).await?;
     Ok(window)
@@ -61,27 +50,18 @@ pub async fn update_window_attribute<F>(
         Some(window) => window,
         None => return Ok(None),
     };
-
-    match attr {
-        WindowAttr::Title(title) => window.title = title,
-        WindowAttr::Content(content) => window.content = content,
-        WindowAttr::Footer(footer) => window.footer = footer,
-        WindowAttr::Position(position) => window.position = position,
-        WindowAttr::Size(size) => window.size = size,
-        WindowAttr::Decorated(decorated) => window.decorated = decorated,
-        WindowAttr::Scrollable(scrollable) => window.scrollable = scrollable,
-        WindowAttr::Scroll(scroll) => window.scroll_offset = scroll,
-        WindowAttr::Highlight(highlight) => window.code_highlight = highlight,
-    }
+    window.update_attribute(attr);
     Ok(windows.get(key).cloned())
 }
 
 pub enum WindowAttr {
     Title(String),
+    Width(usize),
+    Height(Option<usize>),
+    Top(usize),
+    Left(usize),
     Content(Vec<String>),
     Footer(String),
-    Position((usize, usize)),
-    Size((usize, usize)),
     Decorated(bool),
     Scrollable(bool),
     Scroll(usize),
@@ -93,8 +73,10 @@ pub struct Window {
     title: String,
     content: Vec<String>,
     footer: String,
-    position: (usize, usize),
-    size: (usize, usize),
+    top: usize,
+    left: usize,
+    width: usize,
+    height: Option<usize>,
     decorated: bool,
     scrollable: bool,
     scroll_offset: usize,
@@ -104,16 +86,18 @@ pub struct Window {
 impl Window {
     pub fn draw(&self) -> Result<(), Error> {
         let pad = if self.decorated { 2 } else { 0 };
+        let height = self.height.unwrap_or(self.content.len());
+
         let mut content = self
             .content
             .clone()
             .iter()
             .skip(max(0, self.scroll_offset))
-            .take(self.size.1 - pad)
+            .take(height - pad)
             .map(|s| match self.code_highlight {
                 Some(ref lang) => {
                     let line_len = s.len();
-                    let width = self.size.0;
+                    let width = self.width - pad;
                     let s = if line_len < width {
                         let padding = " ".repeat(width - line_len - pad);
                         s.clone() + &padding
@@ -127,10 +111,10 @@ impl Window {
             })
             .collect::<Vec<String>>();
 
-        if self.content.len() < self.size.1 {
+        if self.content.len() < height {
             content.extend(vec![
                 "".to_string();
-                max(self.size.1 - pad - self.content.len(), 0)
+                max(height - pad - self.content.len(), 0)
             ]);
         }
 
@@ -142,16 +126,16 @@ impl Window {
         if self.scrollable {
             display_scrollbar(
                 self.scroll_offset,
-                self.size.1 as usize,
-                self.position.1 + 1,
-                self.size.1,
-                self.size.0,
+                self.content.len() as usize,
+                self.top + 1,
+                self.height.unwrap_or(self.content.len()) - 2,
+                self.left + self.width - 1,
             )?;
         }
         for (i, line) in content.iter().enumerate() {
             print_at(
-                self.position.0 as u16,
-                (self.position.1 + i) as u16,
+                self.left as u16,
+                (self.top + i) as u16,
                 line.as_str().reset().to_string().as_str(),
             )?;
         }
@@ -162,9 +146,22 @@ impl Window {
         Ok(self)
     }
     pub fn scroll_by(&mut self, offset: isize) -> Result<&Self, Error> {
-        let offset = max(0, self.scroll_offset + offset as usize);
+        if !self.scrollable {
+            return Ok(self);
+        }
+        let next_offset = self.scroll_offset as isize + offset;
+        let max_offset = self.content.len() as isize - self.height.unwrap_or(self.content.len()) as isize + 2;
+        let offset = if next_offset < 0 {
+            0
+        } else 
+        if next_offset as usize > max_offset as usize {
+            max_offset as usize
+        } else {
+            next_offset as usize
+        };
         self.scroll(offset)
     }
+
     pub fn scrollable(&mut self, scrollable: bool) -> Result<&Self, Error> {
         self.scrollable = scrollable;
         Ok(self)
@@ -172,8 +169,8 @@ impl Window {
     pub fn clear(&self) -> Result<&Self, Error> {
         for (i, _) in self.content.iter().enumerate() {
             print_at(
-                self.position.0 as u16,
-                (self.position.1 + i) as u16,
+                self.left as u16,
+                (self.top + i) as u16,
                 &" ".repeat(80),
             )?;
         }
@@ -191,8 +188,21 @@ impl Window {
         self.title = title.to_string();
         Ok(self)
     }
-    pub fn size(&mut self, size: (usize, usize)) -> Result<&Self, Error> {
-        self.size = size;
+
+    pub fn update_attribute(&mut self, attr: WindowAttr) -> Result<&Self, Error> {
+        match attr {
+            WindowAttr::Title(title) => self.title = title,
+            WindowAttr::Content(content) => self.content = content,
+            WindowAttr::Footer(footer) => self.footer = footer,
+            WindowAttr::Decorated(decorated) => self.decorated = decorated,
+            WindowAttr::Scrollable(scrollable) => self.scrollable = scrollable,
+            WindowAttr::Scroll(scroll) => self.scroll_offset = scroll,
+            WindowAttr::Highlight(highlight) => self.code_highlight = highlight,
+            WindowAttr::Width(width) => self.width = width,
+            WindowAttr::Height(height) => self.height = height,
+            WindowAttr::Top(top) => self.top = top,
+            WindowAttr::Left(left) => self.left = left,
+        }
         Ok(self)
     }
 }

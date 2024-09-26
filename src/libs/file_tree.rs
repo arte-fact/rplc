@@ -1,15 +1,15 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
-use super::terminal::print_at;
+use super::terminal::screen_height;
+use super::ui::window::{create_and_store_window, WindowAttr};
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Tree {
-    pub children: HashMap<String, Tree>,
+    pub children: BTreeMap<String, Tree>,
 }
 
 pub fn tree_from_pah_vec(paths: Vec<String>) -> Tree {
     let mut tree = Tree::default();
-
     for path in paths {
         let mut current = &mut tree;
         for component in path.split('/') {
@@ -25,9 +25,12 @@ pub fn tree_from_pah_vec(paths: Vec<String>) -> Tree {
 
 pub fn display_tree(tree: &Tree, depth: usize) -> Vec<String> {
     let mut result = vec![];
-    for (name, child) in &tree.children {
+    let mut children = tree.children.clone();
+    let mut children = children.iter_mut().collect::<Vec<_>>();
+    children.sort_by(|(_, a), (_, b)| b.children.keys().len().cmp(&a.children.keys().len()));
+    for (name, child) in children {
         let name = if child.children.is_empty() {
-            name.to_string()
+            name.clone()
         } else {
             format!("{}{}", name, "/")
         };
@@ -37,17 +40,29 @@ pub fn display_tree(tree: &Tree, depth: usize) -> Vec<String> {
     result
 }
 
-pub fn print_tree(x: usize, y: usize, tree: &Tree) -> Result<(), std::io::Error> {
+pub async fn print_tree(top: usize, left: usize, tree: &Tree) -> Result<(), std::io::Error> {
     let lines = display_tree(tree, 0); // "Ctrl-↑/Crtl-↓ to select");
-    for (index, line) in lines.iter().enumerate() {
-        print_at(x as u16, (y + index) as u16, line)?;
-    }
+    create_and_store_window(
+        "file-tree".to_string(),
+        vec![
+            WindowAttr::Top(top),
+            WindowAttr::Left(left),
+            WindowAttr::Width(40),
+            WindowAttr::Height(Some(screen_height() as usize - top)),
+            WindowAttr::Title("Files".to_string()),
+            WindowAttr::Content(lines),
+            WindowAttr::Scrollable(false),
+            WindowAttr::Scroll(0),
+            WindowAttr::Decorated(false),
+            WindowAttr::Highlight(None),
+        ],
+    ).await?.draw()?;
     Ok(())
 }
 
-pub fn display_files_tree(x: usize, y: usize, paths: Vec<String>) -> Result<(), std::io::Error> {
+pub async fn display_files_tree(top: usize, left: usize, paths: Vec<String>) -> Result<(), std::io::Error> {
     let tree = tree_from_pah_vec(paths);
-    print_tree(y, x, &tree)
+    print_tree(top, left, &tree).await
 }
 
 #[test]

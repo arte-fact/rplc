@@ -11,7 +11,8 @@ pub fn list_glob_files(glob_pattern: &str) -> Result<Vec<PathBuf>, std::io::Erro
             Ok(vec![])
         }
         Ok(files) => {
-            let files: Vec<PathBuf> = files.filter_map(|x| x.ok()).collect();
+            let mut files: Vec<PathBuf> = files.filter_map(|x| x.ok()).collect();
+            files.sort_by(|a, b| a.is_dir().cmp(&b.is_dir()));
             Ok(files)
         }
     }

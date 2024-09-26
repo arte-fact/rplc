@@ -9,7 +9,7 @@ use tokio::sync::Mutex;
 use crate::libs::decorate_file_content::decorate_file_content;
 use crate::libs::scrollbar::display_scrollbar;
 use crate::libs::syntax_highlight::highlight_line;
-use crate::libs::terminal::{print_at, screen_width};
+use crate::libs::terminal::print_at;
 
 lazy_static! {
     static ref WINDOWS: Arc<Mutex<HashMap<String, Window>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -30,28 +30,9 @@ pub async fn store_window(key: String, window: Window) -> Result<(), Error> {
     Ok(())
 }
 
-pub async fn update_window(key: String, window: Window) -> Result<(), Error> {
-    let mut windows = WINDOWS.lock().await;
-    windows.insert(key, window);
-    Ok(())
-}
-
 pub async fn get_window(key: &str) -> Option<Window> {
     let windows = WINDOWS.lock().await;
     windows.get(key).cloned()
-}
-
-pub async fn update_window_attribute<F>(
-    key: &str,
-    attr: WindowAttr,
-) -> Result<Option<Window>, Error> {
-    let mut windows = WINDOWS.lock().await;
-    let window = match windows.get_mut(key) {
-        Some(window) => window,
-        None => return Ok(None),
-    };
-    window.update_attribute(attr);
-    Ok(windows.get(key).cloned())
 }
 
 pub enum WindowAttr {
@@ -101,6 +82,8 @@ impl Window {
                     let s = if line_len < width {
                         let padding = " ".repeat(width - line_len - pad);
                         s.clone() + &padding
+                    } else if line_len > width {
+                        s.chars().take(width).collect::<String>()
                     } else {
                         s.clone()
                     };
@@ -123,6 +106,13 @@ impl Window {
         } else {
             self.content.clone()
         };
+        for (i, line) in content.iter().enumerate() {
+            print_at(
+                self.left as u16,
+                (self.top + i) as u16,
+                line.as_str().reset().to_string().as_str(),
+            )?;
+        }
         if self.scrollable {
             display_scrollbar(
                 self.scroll_offset,
@@ -130,13 +120,6 @@ impl Window {
                 self.top + 1,
                 self.height.unwrap_or(self.content.len()) - 2,
                 self.left + self.width - 1,
-            )?;
-        }
-        for (i, line) in content.iter().enumerate() {
-            print_at(
-                self.left as u16,
-                (self.top + i) as u16,
-                line.as_str().reset().to_string().as_str(),
             )?;
         }
         Ok(())
@@ -153,8 +136,7 @@ impl Window {
         let max_offset = self.content.len() as isize - self.height.unwrap_or(self.content.len()) as isize + 2;
         let offset = if next_offset < 0 {
             0
-        } else 
-        if next_offset as usize > max_offset as usize {
+        } else if next_offset as usize > max_offset as usize {
             max_offset as usize
         } else {
             next_offset as usize
@@ -166,12 +148,14 @@ impl Window {
         self.scrollable = scrollable;
         Ok(self)
     }
+
     pub fn clear(&self) -> Result<&Self, Error> {
-        for (i, _) in self.content.iter().enumerate() {
+        let pad = if self.decorated { 1 } else { 0 };
+        for i in pad..self.height.unwrap_or(self.content.len()) - pad {
             print_at(
-                self.left as u16,
-                (self.top + i) as u16,
-                &" ".repeat(80),
+                self.left as u16 + pad as u16,
+                (self.top + i) as u16 + pad as u16,
+                &" ".repeat(self.width - pad),
             )?;
         }
         Ok(self)

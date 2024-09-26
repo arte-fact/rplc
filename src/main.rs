@@ -20,6 +20,7 @@ use crossterm::terminal::{
 };
 
 use self::classic::classic_mode;
+use self::libs::file_tree::display_files_tree;
 use self::libs::files::{list_glob_files, store_glob_files};
 use self::libs::split_query::{split_query, QuerySplit};
 use self::libs::state::{get_file, get_files_names, get_key_value, store_key_value};
@@ -149,6 +150,11 @@ async fn display_results(split: QuerySplit) -> Result<(), std::io::Error> {
     let files = list_glob_files(glob)?;
     print_at(0, 3, &format!("{} files found", files.len()))?;
     let mut top = 4;
+    let files_paths = files.iter().filter_map(|pb| match pb.to_str() {
+        Some(path) => Some(path.to_string()),
+        None => None,
+    }).collect();
+    display_files_tree(5, 0, files_paths).await?;
     for file_path in files.iter() {
         let path = match file_path.to_str() {
             Some(path) => path,
@@ -169,10 +175,11 @@ async fn display_results(split: QuerySplit) -> Result<(), std::io::Error> {
 }
 
 async fn code_window(path: &str, content: &str, top: usize) -> Result<(), std::io::Error> {
+    let left = 40;
     let height = screen_height() - top;
-    let width = screen_width();
+    let width = screen_width() - left;
 
-    let highlight = match path.split('.').last() {
+    let file_ext = match path.split('.').last() {
         Some(highlight) => Some(highlight.to_string()),
         None => None,
     };
@@ -184,13 +191,13 @@ async fn code_window(path: &str, content: &str, top: usize) -> Result<(), std::i
             WindowAttr::Content(content.lines().map(|x| x.to_string()).collect()),
             WindowAttr::Footer("Footer".to_string()),
             WindowAttr::Top(top as usize),
-            WindowAttr::Left(0),
+            WindowAttr::Left(left as usize),
             WindowAttr::Width(width as usize),
             WindowAttr::Height(Some(height as usize)),
             WindowAttr::Decorated(true),
             WindowAttr::Scrollable(true),
             WindowAttr::Scroll(0),
-            WindowAttr::Highlight(highlight),
+            WindowAttr::Highlight(file_ext),
         ],
     )
     .await?

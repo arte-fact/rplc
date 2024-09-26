@@ -1,6 +1,7 @@
-use crossterm::execute;
 use std::cmp::min;
-use std::io::{stdout, Error};
+use std::io::Error;
+
+use super::terminal::print_at;
 
 pub fn display_scrollbar(
     offset: usize,
@@ -20,11 +21,7 @@ pub fn display_scrollbar(
         } else {
             '░'
         };
-        execute!(
-            stdout(),
-            crossterm::cursor::MoveTo(left as u16, (top + i) as u16),
-            crossterm::style::Print(char),
-        )?;
+        print_at(left as u16, (top + i) as u16, &char.to_string())?;
     }
     Ok(())
 }

@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -23,6 +24,11 @@ pub async fn get_files_names() -> Vec<String> {
         .cloned()
         .map(|x| x.replace("file_", ""))
         .collect()
+}
+
+pub async fn get_files_paths() -> Vec<PathBuf> {
+    let state = STATE.lock().await;
+    state.values().map(PathBuf::from).collect()
 }
 
 pub async fn clear_files() {

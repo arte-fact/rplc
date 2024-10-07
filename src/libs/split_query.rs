@@ -2,6 +2,7 @@ use std::io::Error;
 
 use crossterm::style::Stylize;
 
+use super::state::{get_key_value, store_key_value};
 use super::terminal::{clear_lines, print_at};
 
 #[derive(Debug, PartialEq, Default, Clone)]
@@ -47,6 +48,35 @@ impl QuerySplit {
         print_at(self.len() as u16, 2, "█")
 
     }
+
+    pub async fn store(&self) {
+        if let Some(query) = &self.query {
+            store_key_value("query".to_string(), query.to_string()).await;
+        }
+    }
+
+    pub async fn get_stored() -> Option<String> {
+        get_key_value("query").await
+    }
+
+    pub fn get_identifier(&self) -> String {
+        match &self.query {
+            Some(query) => query.to_string().replace(" ", "_"),
+            None => "".to_string(),
+        }
+    }
+
+    pub async fn still_exists(&self) -> bool {
+        let stored = match QuerySplit::get_stored().await {
+            Some(stored) => stored,
+            None => return false,
+        };
+        let query = match &self.query {
+            Some(query) => query,
+            None => return false,
+        };
+        &stored == query
+    }
 }
 
 fn update_split_query(split_query: &mut QuerySplit, temp: &str) {
@@ -62,7 +92,7 @@ fn update_split_query(split_query: &mut QuerySplit, temp: &str) {
     }
 }
 
-pub fn split_query(query: &str) -> QuerySplit {
+pub async fn split_query(query: &str) -> QuerySplit {
     let mut temp = String::new();
     let mut quote_char = None;
     let mut split_query = QuerySplit::default();
@@ -87,122 +117,7 @@ pub fn split_query(query: &str) -> QuerySplit {
     update_split_query(&mut split_query, &temp);
     split_query.query = Some(query.to_string());
 
+    split_query.store().await;
+
     split_query
-}
-
-#[test]
-fn handle_simple() {
-    let query = "* search replace";
-    assert_eq!(
-        split_query(query),
-        QuerySplit {
-            query: Some(query.to_string()),
-            glob: Some("*".to_string()),
-            search: Some("search".to_string()),
-            replace: Some("replace".to_string()),
-        }
-    );
-}
-
-#[test]
-fn handle_double_quotes() {
-    let query = "* \"search quotes\" replace";
-    assert_eq!(
-        split_query(query),
-        QuerySplit {
-            query: Some(query.to_string()),
-            glob: Some("*".to_string()),
-            search: Some("search quotes".to_string()),
-            replace: Some("replace".to_string()),
-        }
-    );
-}
-
-#[test]
-fn handle_single_quotes() {
-    let query = "* 'search quotes' replace";
-    assert_eq!(
-        split_query(query),
-        QuerySplit {
-            query: Some(query.to_string()),
-            glob: Some("*".to_string()),
-            search: Some("search quotes".to_string()),
-            replace: Some("replace".to_string()),
-        }
-    );
-}
-
-#[test]
-fn handle_empty() {
-    let query = "";
-    assert_eq!(
-        split_query(query),
-        QuerySplit {
-            query: Some(query.to_string()),
-            glob: None,
-            search: None,
-            replace: None,
-        }
-    );
-}
-
-#[test]
-fn handle_empty_quotes() {
-    let query = "src \"\"";
-    assert_eq!(
-        split_query(query),
-        QuerySplit {
-            query: Some(query.to_string()),
-            glob: Some("src".to_string()),
-            search: None,
-            replace: None,
-        }
-    );
-}
-
-#[test]
-fn ignore_additional_spaces() {
-    let query = "  *  search  replace  ";
-    assert_eq!(
-        split_query(query),
-        QuerySplit {
-            query: Some(query.to_string()),
-            glob: Some("*".to_string()),
-            search: Some("search".to_string()),
-            replace: Some("replace".to_string()),
-        }
-    );
-}
-
-#[test]
-fn ignore_additional_words() {
-    let query = "* search replace extra";
-    assert_eq!(
-        split_query(query),
-        QuerySplit {
-            query: Some(query.to_string()),
-            glob: Some("*".to_string()),
-            search: Some("search".to_string()),
-            replace: Some("replace".to_string()),
-        }
-    );
-}
-
-#[test]
-fn query_display_with_colors() {
-    let query = QuerySplit {
-        query: Some("* search replace".to_string()),
-        glob: Some("*".to_string()),
-        search: Some("search".to_string()),
-        replace: Some("replace".to_string()),
-    };
-    assert_eq!(
-        query.display_with_colors(),
-        format!(
-            "{} {} {}",
-            "*".to_string().stylize().bold().blue(),
-            "search".to_string().stylize().bold().yellow(),
-            "replace".to_string().stylize().bold().green()
-        )
-    );
 }

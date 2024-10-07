@@ -8,3 +8,6 @@ pub mod file_tree;
 pub mod ui;
 pub mod files;
 pub mod file;
+pub mod store;
+pub mod windows;
+pub mod debug;

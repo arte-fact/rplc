@@ -1,8 +1,15 @@
+use std::sync::atomic::AtomicUsize;
+
 use crossterm::style::Stylize;
 
 use crate::libs::file::{display_changes_in_file, replace_in_file};
 use crate::libs::files::list_glob_files;
-use crate::{Opts, FILE_COUNT, REPLACED_COUNT};
+use crate::Opts;
+
+static FILE_COUNT: AtomicUsize = AtomicUsize::new(0);
+static REPLACED_COUNT: AtomicUsize = AtomicUsize::new(0);
+static TOTAL_LINES: AtomicUsize = AtomicUsize::new(0);
+static SCROLL_OFFSET: AtomicUsize = AtomicUsize::new(0);
 
 pub(crate) async fn classic_mode(opts: &Opts) -> Result<(), std::io::Error> {
     if opts.query.is_none() || opts.substitute.is_none() || opts.glob.is_none() {
@@ -36,7 +43,7 @@ pub(crate) async fn classic_mode(opts: &Opts) -> Result<(), std::io::Error> {
 
     let glob = glob.unwrap_or("".to_string());
 
-    let files = list_glob_files(&glob)?;
+    let files = list_glob_files(&glob).await?;
     for file in &files {
         if !file.is_file() {
             continue;

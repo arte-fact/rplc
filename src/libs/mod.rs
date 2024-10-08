@@ -11,3 +11,4 @@ pub mod file;
 pub mod store;
 pub mod windows;
 pub mod debug;
+pub mod ignore;

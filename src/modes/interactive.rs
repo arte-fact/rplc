@@ -30,9 +30,11 @@ fn init() -> Result<(), std::io::Error> {
 }
 
 pub async fn interactive_mode() -> Result<(), std::io::Error> {
+    crate::log!("Starting interactive mode");
     init()?;
 
     let mut user_query = "**/*".to_string();
+
     handle_user_query(&user_query).await?;
     redraw().await?;
     loop {
@@ -143,10 +145,12 @@ async fn handle_user_query(user_query: &String) -> Result<(), std::io::Error> {
 }
 
 async fn handle_user_query_task(user_query: &String) -> Result<(), std::io::Error> {
+    crate::log!("Handling user query: {}", user_query);
     let split = split_query(user_query).await;
     split.print()?;
     store_query(&split).await;
     let paths = store_glob_files(&split).await?;
+    
     let selected = paths.iter().filter(|path| path.is_file()).next().cloned();
     let tree = Tree::from_path_vec(&paths);
     store_tree(&tree).await;

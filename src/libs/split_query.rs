@@ -2,7 +2,7 @@ use std::io::Error;
 
 use crossterm::style::Stylize;
 
-use super::state::{get_key_value, store_key_value};
+use super::state::store_key_value;
 use super::terminal::{clear_lines, print_at};
 
 #[derive(Debug, PartialEq, Default, Clone)]
@@ -53,29 +53,6 @@ impl QuerySplit {
         if let Some(query) = &self.query {
             store_key_value("query".to_string(), query.to_string()).await;
         }
-    }
-
-    pub async fn get_stored() -> Option<String> {
-        get_key_value("query").await
-    }
-
-    pub fn get_identifier(&self) -> String {
-        match &self.query {
-            Some(query) => query.to_string().replace(" ", "_"),
-            None => "".to_string(),
-        }
-    }
-
-    pub async fn still_exists(&self) -> bool {
-        let stored = match QuerySplit::get_stored().await {
-            Some(stored) => stored,
-            None => return false,
-        };
-        let query = match &self.query {
-            Some(query) => query,
-            None => return false,
-        };
-        &stored == query
     }
 }
 

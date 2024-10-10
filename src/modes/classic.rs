@@ -8,8 +8,6 @@ use crate::Opts;
 
 static FILE_COUNT: AtomicUsize = AtomicUsize::new(0);
 static REPLACED_COUNT: AtomicUsize = AtomicUsize::new(0);
-static TOTAL_LINES: AtomicUsize = AtomicUsize::new(0);
-static SCROLL_OFFSET: AtomicUsize = AtomicUsize::new(0);
 
 pub(crate) async fn classic_mode(opts: &Opts) -> Result<(), std::io::Error> {
     if opts.query.is_none() || opts.substitute.is_none() || opts.glob.is_none() {

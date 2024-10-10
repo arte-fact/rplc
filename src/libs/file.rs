@@ -30,17 +30,6 @@ pub async fn display_changes_in_file(
     Ok((result, changes))
 }
 
-pub async fn count_occurrences_in_file(query: &str, path: &str) -> Result<usize, std::io::Error> {
-    let content = match get_file(path).await {
-        Some(content) => content,
-        None => {
-            return Ok(0);
-        }
-    };
-    let count = content.matches(query).count();
-    Ok(count)
-}
-
 pub async fn replace_in_file(
     query: String,
     substitute: String,

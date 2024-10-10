@@ -38,6 +38,7 @@ pub async fn code_window() -> Result<(), std::io::Error> {
             WindowAttr::Scrollable(true),
             WindowAttr::Scroll(0),
             WindowAttr::Highlight(file_ext),
+            WindowAttr::DecorationStyle(Default::default()),
         ],
     )
     .await?

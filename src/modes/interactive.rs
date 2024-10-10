@@ -1,5 +1,5 @@
 use std::cmp::max;
-use std::io::{stdout, Error};
+use std::io::Error;
 use std::time::Duration;
 
 use chrono::Local;
@@ -145,7 +145,6 @@ async fn handle_user_query(user_query: &String) -> Result<(), std::io::Error> {
 }
 
 async fn handle_user_query_task(user_query: &String) -> Result<(), std::io::Error> {
-    crate::log!("Handling user query: {}", user_query);
     let split = split_query(user_query).await;
     split.print()?;
     store_query(&split).await;

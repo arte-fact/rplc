@@ -71,13 +71,3 @@ pub fn screen_width() -> usize {
 pub fn screen_height() -> usize {
     SCREEN_HEIGHT.load(Ordering::SeqCst)
 }
-
-// debug macro
-#[macro_export]
-macro_rules! debug {
-    ($($arg:tt)*) => {
-        if cfg!(debug_assertions) {
-            print_at(0, screen_height() as u16 - 1, &format!($($arg)*)).unwrap();
-        }
-    };
-}

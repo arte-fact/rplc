@@ -19,11 +19,6 @@ pub async fn get_file(key: &str) -> Option<String> {
     files.get(key).cloned()
 }
 
-pub async fn get_files() -> FileHashMap {
-    let files = FILES.lock().await;
-    files.clone()
-}
-
 pub async fn clear_files() {
     let mut files = FILES.lock().await;
     files.clear();

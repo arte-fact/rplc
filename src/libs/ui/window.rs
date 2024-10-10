@@ -69,47 +69,55 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn draw(&self) -> Result<(), Error> {
-        self.clear()?;
-        let height = self.height.unwrap_or(self.content.len());
-        let height = height - 2;
-        let left = self.left + 1;
-        let width = self.width - 2;
-        let top = self.top + 1;
-
-        let mut content = self
+    pub fn highlight_content(&self) -> Result<(), Error> {
+        let content = self
             .content
             .clone()
             .iter()
-            .skip(max(0, self.scroll_offset))
-            .take(height)
+            .take(self.height.unwrap_or(self.content.len()) - 2)
             .map(|s| match self.code_highlight {
                 Some(ref lang) => {
-                    let line_len = s.len();
-                    let s = if line_len < width {
-                        let padding = " ".repeat(width - line_len);
-                        s.clone() + &padding
-                    } else if line_len > width {
-                        s.chars().take(width).collect::<String>()
-                    } else {
-                        s.clone()
-                    };
-
-                    highlight_line(&s, lang).unwrap_or_else(|_| s.clone())
+                    let mut s = s.clone().chars().take(self.width - 2).collect::<String>();
+                    s.push_str(" ".repeat(self.width - 2 - s.len()).as_str());
+                    return highlight_line(&s, lang).unwrap_or_else(|_| s.clone());
                 }
                 None => s.clone(),
             })
             .collect::<Vec<String>>();
 
-        if self.content.len() < height {
-            content.extend(vec!["".to_string(); max(height - self.content.len(), 0)]);
+        for (i, line) in content.iter().enumerate() {
+            print_at(
+                (self.left + 1) as u16,
+                (self.top + i + 1) as u16,
+                line.as_str(),
+            )?;
         }
+
+        Ok(())
+    }
+
+    pub fn visible_content(&self) -> Vec<String> {
+        self.content
+            .clone()
+            .iter()
+            .skip(max(0, self.scroll_offset))
+            .take(self.height.unwrap_or(self.content.len()) - 2)
+            .map(|s| s.clone().chars().take(self.width - 2).collect::<String>())
+            .collect()
+    }
+
+    pub fn draw(&self) -> Result<(), Error> {
+        self.clear()?;
+        let height = self.height.unwrap_or(self.content.len());
+        let height = height - 2;
+        let left = self.left + 1;
+        let top = self.top + 1;
 
         if self.decorated {
             print_window_decoration(self.clone())?;
         }
 
-        for (i, line) in content.iter().enumerate() {
+        for (i, line) in self.visible_content().iter().enumerate() {
             print_at(
                 left as u16,
                 (top + i) as u16,
@@ -125,12 +133,19 @@ impl Window {
                 left + self.width - 1,
             )?;
         }
+
+        if self.code_highlight.is_some() {
+            self.highlight_content()?;
+        }
+
         Ok(())
     }
+
     pub fn scroll(&mut self, offset: usize) -> Result<&Self, Error> {
         self.scroll_offset = offset;
         Ok(self)
     }
+
     pub fn scroll_by(&mut self, offset: isize) -> Result<&Self, Error> {
         if !self.scrollable {
             return Ok(self);
@@ -148,11 +163,6 @@ impl Window {
         self.scroll(offset)
     }
 
-    pub fn scrollable(&mut self, scrollable: bool) -> Result<&Self, Error> {
-        self.scrollable = scrollable;
-        Ok(self)
-    }
-
     pub fn clear(&self) -> Result<&Self, Error> {
         for i in 0..self.height.unwrap_or(self.content.len()) {
             print_at(
@@ -162,18 +172,6 @@ impl Window {
             )?;
         }
         Ok(self)
-    }
-    pub fn content(&mut self, content: Vec<String>) -> Result<Self, Error> {
-        self.content = content;
-        Ok(self.clone())
-    }
-    pub fn footer(&mut self, footer: Option<String>) -> Result<Self, Error> {
-        self.footer = footer;
-        Ok(self.clone())
-    }
-    pub fn title(&mut self, title: Option<String>) -> Result<Self, Error> {
-        self.title = title;
-        Ok(self.clone())
     }
 
     pub fn update_attribute(&mut self, attr: WindowAttr) -> Result<&Self, Error> {

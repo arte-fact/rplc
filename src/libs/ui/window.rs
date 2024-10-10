@@ -1,4 +1,4 @@
-use std::cmp::max;
+use std::cmp::{max, min};
 use std::collections::HashMap;
 use std::io::Error;
 use std::sync::Arc;
@@ -143,6 +143,7 @@ impl Window {
 
     pub fn scroll(&mut self, offset: usize) -> Result<&Self, Error> {
         self.scroll_offset = offset;
+        self.draw()?;
         Ok(self)
     }
 
@@ -151,16 +152,9 @@ impl Window {
             return Ok(self);
         }
         let next_offset = self.scroll_offset as isize + offset;
-        let max_offset =
-            self.content.len() as isize - self.height.unwrap_or(self.content.len()) as isize + 2;
-        let offset = if next_offset < 0 {
-            0
-        } else if next_offset as usize > max_offset as usize {
-            max_offset as usize
-        } else {
-            next_offset as usize
-        };
-        self.scroll(offset)
+        let max_offset = self.content.len() as isize - self.height.unwrap_or(self.content.len()) as isize + 2;
+
+        self.scroll(max(0, min(next_offset as usize, max_offset as usize)))
     }
 
     pub fn clear(&self) -> Result<&Self, Error> {

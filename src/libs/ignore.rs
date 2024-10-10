@@ -8,7 +8,9 @@ pub fn match_glob_and_ignore(glob: String) -> Result<Vec<PathBuf>, Error> {
 
     let mut entries: Vec<PathBuf> = vec![];
 
-    let glob_builder = match GlobBuilder::new(&glob).literal_separator(true).build() {
+    let glob_builder = match GlobBuilder::new(&("./".to_string() + &glob))
+        .literal_separator(true)
+        .build() {
         Ok(glob_builder) => glob_builder,
         Err(e) => return Err(Error::new(std::io::ErrorKind::Other, e)),
     };

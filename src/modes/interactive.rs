@@ -149,6 +149,10 @@ async fn handle_user_query_task(user_query: &String) -> Result<(), std::io::Erro
     split.print()?;
     store_query(&split).await;
     let paths = store_glob_files(&split).await?;
+    if paths.is_empty() {
+        store_selected(None).await;
+        return Ok(());
+    }
     
     let selected = paths.iter().filter(|path| path.is_file()).next().cloned();
     let tree = Tree::from_path_vec(&paths);
@@ -166,7 +170,6 @@ async fn scroll_window(name: &str, offset: isize) -> Result<(), std::io::Error> 
     };
     let scroll = window.scroll_by(offset)?;
     let _ = &scroll.draw()?;
-    store_window(name.to_string(), window).await;
     Ok(())
 }
 
